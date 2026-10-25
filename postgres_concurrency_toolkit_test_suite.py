@@ -191,3 +191,85 @@ def test_postgres_integration_skip_locked_priority_and_persistence():
         with admin_conn.cursor() as cur:
             cur.execute("DELETE FROM concurrent_jobs WHERE queue_name = %s;", (queue_name,))
         admin_conn.close()
+
+
+@pytest.mark.skipif(not os.environ.get("TEST_PG_DSN"), reason="TEST_PG_DSN not set for live PostgreSQL integration")
+def test_postgres_integration_overlapping_worker_claims():
+    """
+    Step 2B (V-05 / G-05): Coordinates 4 independent concurrent workers via threading.Barrier
+    against 6 queued jobs in a disposable PostgreSQL queue. Verifies:
+      - Each job is claimed at most once (zero duplicate claims).
+      - All 6 expected jobs are claimed.
+      - Persisted status ('PROCESSING') and ownership ('claimed_by') match in PostgreSQL.
+      - Bounded waits prevent hangs on failure.
+    """
+    import concurrent.futures
+    import threading
+
+    dsn = os.environ["TEST_PG_DSN"]
+    queue_name = f"overlap_{uuid.uuid4().hex[:8]}"
+    expected_job_ids = {f"{queue_name}_job_{i}" for i in range(6)}
+
+    admin_conn = psycopg2.connect(dsn)
+    admin_conn.autocommit = True
+    try:
+        with admin_conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS concurrent_jobs (
+                    id VARCHAR(128) PRIMARY KEY,
+                    queue_name VARCHAR(128) NOT NULL,
+                    status VARCHAR(32) NOT NULL DEFAULT 'QUEUED',
+                    priority INT NOT NULL DEFAULT 0,
+                    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    claimed_by VARCHAR(128),
+                    claimed_at TIMESTAMPTZ,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            for idx in range(6):
+                cur.execute(
+                    "INSERT INTO concurrent_jobs (id, queue_name, priority, payload) VALUES (%s, %s, %s, %s::jsonb);",
+                    (f"{queue_name}_job_{idx}", queue_name, 100 - idx, json.dumps({"idx": idx})),
+                )
+
+        num_workers = 4
+        barrier = threading.Barrier(num_workers, timeout=5.0)
+
+        def worker_task(worker_num: int):
+            worker_id = f"worker-{worker_num:02d}"
+            q = PostgresJobQueue(dsn=dsn)
+            barrier.wait(timeout=5.0)
+            claimed = []
+            for _ in range(3):
+                job = q.claim_next_job(worker_id=worker_id, queue_name=queue_name)
+                if job is not None:
+                    claimed.append((job["job_id"], worker_id))
+            return claimed
+
+        all_claims = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=num_workers) as pool:
+            futures = [pool.submit(worker_task, w) for w in range(1, num_workers + 1)]
+            for fut in concurrent.futures.as_completed(futures, timeout=10.0):
+                all_claims.extend(fut.result(timeout=5.0))
+
+        claimed_ids = [jid for jid, _ in all_claims]
+        assert len(claimed_ids) == len(set(claimed_ids)), f"Duplicate job claims: {all_claims}"
+        assert set(claimed_ids) == expected_job_ids
+
+        with admin_conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, status, claimed_by FROM concurrent_jobs WHERE queue_name = %s;",
+                (queue_name,),
+            )
+            persisted = {row[0]: (row[1], row[2]) for row in cur.fetchall()}
+
+        assert set(persisted.keys()) == expected_job_ids
+        for job_id, worker_id in all_claims:
+            status, owner = persisted[job_id]
+            assert status == "PROCESSING"
+            assert owner == worker_id
+    finally:
+        with admin_conn.cursor() as cur:
+            cur.execute("DELETE FROM concurrent_jobs WHERE queue_name = %s;", (queue_name,))
+        admin_conn.close()
