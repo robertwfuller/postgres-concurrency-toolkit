@@ -12,6 +12,15 @@ dependencies = [
     "psycopg2-binary>=2.9.0",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "build>=1.0.0",
+]
+
+[tool.setuptools]
+py-modules = ["postgres_concurrency_toolkit"]
+
 [tool.pytest.ini_options]
 testpaths = ["."]
 python_files = ["*test*.py"]

@@ -1,6 +1,8 @@
 # PostgreSQL Concurrency Toolkit
 
-A lightweight Python utility for PostgreSQL-backed job queues using `FOR UPDATE SKIP LOCKED` and exponential backoff with full jitter.
+![CI Test Suite](https://github.com/robertwfuller/postgres-concurrency-toolkit/actions/workflows/ci.yml/badge.svg)
+
+A lightweight Python utility for PostgreSQL-backed job queues using `FOR UPDATE SKIP LOCKED` and exponential backoff with full jitter (Canonical Catalog: **Asset #20**).
 
 ## Implemented Capabilities
 * **Concurrent Job Claiming (`PostgresJobQueue.claim_next_job`):** Claims the highest-priority (`priority DESC, created_at ASC`) `QUEUED` job in a target queue and atomically transitions it to `PROCESSING` within a single transaction.
@@ -21,9 +23,14 @@ CREATE TABLE IF NOT EXISTS concurrent_jobs (
 );
 ```
 
-## Quickstart
+## Quickstart & Verification
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e . pytest
+pip install -e ".[dev]"
+python -m build
 pytest -v
+```
+To run the live PostgreSQL integration test locally, set `TEST_PG_DSN`:
+```bash
+TEST_PG_DSN="postgresql://test_user:test_password@localhost:5432/harness_test" pytest -v
 ```

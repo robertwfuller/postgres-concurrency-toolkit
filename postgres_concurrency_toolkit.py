@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 postgres_concurrency_toolkit.py
-Asset #16: High-Throughput Concurrent Job Queue Engine.
+Asset #20: High-Throughput Concurrent Job Queue Engine.
 Uses 'FOR UPDATE SKIP LOCKED' to implement clean parallel job processing without Redis.
 """
 
