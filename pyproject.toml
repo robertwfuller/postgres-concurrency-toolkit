@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "postgres-concurrency-toolkit"
+version = "1.0.0"
+description = "PostgreSQL FOR UPDATE SKIP LOCKED job claiming utility and exponential full-jitter backoff calculator."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "psycopg2-binary>=2.9.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["."]
+python_files = ["*test*.py"]
